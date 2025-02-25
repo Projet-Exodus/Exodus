@@ -246,13 +246,13 @@
 			disgusted.throw_alert(ALERT_DISGUST, /atom/movable/screen/alert/disgusted)
 			disgusted.add_mood_event("disgust", /datum/mood_event/disgusted)
 
-/obj/item/organ/stomach/mob_insert(mob/living/carbon/receiver, special, movement_flags)
+/obj/item/organ/stomach/on_mob_insert(mob/living/carbon/receiver, special, movement_flags)
 	. = ..()
 	receiver.hud_used?.hunger?.update_appearance()
 
-/obj/item/organ/stomach/mob_remove(mob/living/carbon/stomach_owner, special, movement_flags)
+/obj/item/organ/stomach/on_mob_remove(mob/living/carbon/stomach_owner, special, movement_flags)
 	if(ishuman(stomach_owner))
-		var/mob/living/carbon/human/human_owner = owner
+		var/mob/living/carbon/human/human_owner = stomach_owner
 		human_owner.clear_alert(ALERT_DISGUST)
 		human_owner.clear_mood_event("disgust")
 	stomach_owner.hud_used?.hunger?.update_appearance()
@@ -324,5 +324,11 @@
 /obj/item/organ/stomach/cybernetic/surplus/Initialize(mapload)
 	. = ..()
 	AddElement(/datum/element/dangerous_organ_removal, /*surgical = */ TRUE)
+
+/obj/item/organ/stomach/pod
+	name = "pod chloroplast"
+	desc = "A green plant-like organ that functions similarly to a human stomach."
+	foodtype_flags = PODPERSON_ORGAN_FOODTYPES
+	color = COLOR_LIME
 
 #undef STOMACH_METABOLISM_CONSTANT
