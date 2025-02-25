@@ -77,7 +77,7 @@
 		if(!hurt)
 			return
 
-		if(victim.check_block(src, 0, "[name]", LEAP_ATTACK))
+		if(. == SUCCESSFUL_BLOCK || victim.check_block(src, 0, "[name]", LEAP_ATTACK))
 			blocked = TRUE
 
 		take_bodypart_damage(10 + 5 * extra_speed, check_armor = TRUE, wound_bonus = extra_speed * 5)
@@ -120,7 +120,7 @@
 		return
 	throw_mode = THROW_MODE_DISABLED
 	if(hud_used)
-		hud_used.throw_icon.icon_state = "act_throw_off"
+		hud_used.throw_icon.icon_state = "act_throw"
 	SEND_SIGNAL(src, COMSIG_LIVING_THROW_MODE_TOGGLE, throw_mode)
 
 
@@ -170,6 +170,13 @@
 		if(start_T && end_T)
 			log_combat(src, thrown_thing, "thrown", addition="grab from tile in [AREACOORD(start_T)] towards tile at [AREACOORD(end_T)]")
 	var/power_throw = 0
+	var/extra_throw_range = HAS_TRAIT(src, TRAIT_THROWINGARM) ? 2 : 0
+
+	var/obj/item/organ/cyberimp/chest/spine/potential_spine = get_organ_slot(ORGAN_SLOT_SPINE)
+	if(istype(potential_spine))
+		power_throw += potential_spine.added_throw_speed
+		extra_throw_range += potential_spine.added_throw_range
+
 	if(HAS_TRAIT(src, TRAIT_HULK))
 		power_throw++
 	if(HAS_TRAIT(src, TRAIT_DWARF))
@@ -200,11 +207,6 @@
 	visible_message(span_danger("[src] [verb_text][plural_s(verb_text)] [thrown_thing][power_throw_text]"), \
 					span_danger("You [verb_text] [thrown_thing][power_throw_text]"))
 	log_message("has thrown [thrown_thing] [power_throw_text]", LOG_ATTACK)
-	var/extra_throw_range = HAS_TRAIT(src, TRAIT_THROWINGARM) ? 2 : 0
-
-	var/obj/item/organ/cyberimp/chest/spine/potential_spine = get_organ_slot(ORGAN_SLOT_SPINE)
-	if(istype(potential_spine))
-		extra_throw_range += potential_spine.added_throw_range
 
 	var/drift_force = max(0.5 NEWTONS, 1 NEWTONS + power_throw)
 	if (isitem(thrown_thing))
@@ -226,13 +228,13 @@
 /mob/living/carbon/Topic(href, href_list)
 	..()
 	if(href_list["embedded_object"])
-		var/obj/item/bodypart/L = locate(href_list["embedded_limb"]) in bodyparts
-		if(!L)
+		var/obj/item/bodypart/limb = locate(href_list["embedded_limb"]) in bodyparts
+		if(!limb)
 			return
-		var/obj/item/I = locate(href_list["embedded_object"]) in L.embedded_objects
-		if(!I || I.loc != src) //no item, no limb, or item is not in limb or in the person anymore
+		var/obj/item/weapon = locate(href_list["embedded_object"]) in limb.embedded_objects
+		if(!weapon || weapon.loc != src) //no item, no limb, or item is not in limb or in the person anymore
 			return
-		SEND_SIGNAL(src, COMSIG_CARBON_EMBED_RIP, I, L)
+		weapon.get_embed().rip_out(usr)
 		return
 
 	if(href_list["show_paper_note"])
@@ -244,7 +246,7 @@
 
 /mob/living/carbon/on_fall()
 	. = ..()
-	loc?.handle_fall(src)//it's loc so it doesn't call the mob's handle_fall which does nothing
+	loc?.handle_fall(src) //it's loc so it doesn't call the mob's handle_fall which does nothing
 
 /mob/living/carbon/resist_buckle()
 	if(!HAS_TRAIT(src, TRAIT_RESTRAINED))
@@ -570,7 +572,11 @@
 	set_health(round(maxHealth - getOxyLoss() - getToxLoss() - total_burn - total_brute, DAMAGE_PRECISION))
 	update_stat()
 	update_stamina()
-	if(((maxHealth - total_burn) < HEALTH_THRESHOLD_DEAD*2) && stat == DEAD )
+
+	/// The amount of burn damage needed to be done for this mob to be husked
+	var/husk_threshold = get_bodypart(BODY_ZONE_CHEST).max_damage * -1
+
+	if(((maxHealth - total_burn) < husk_threshold) && stat == DEAD )
 		become_husk(BURN)
 	med_hud_set_health()
 	if(stat == SOFT_CRIT)
@@ -582,7 +588,7 @@
 /mob/living/carbon/update_sight()
 	if(!client)
 		return
-	if(stat == DEAD)
+	if(stat == DEAD && !HAS_TRAIT(src, TRAIT_CORPSELOCKED))
 		if(SSmapping.level_trait(z, ZTRAIT_NOXRAY))
 			set_sight(null)
 		else if(is_secret_level(z))
@@ -632,6 +638,9 @@
 	if(HAS_TRAIT(src, TRAIT_THERMAL_VISION))
 		new_sight |= SEE_MOBS
 		lighting_cutoff = max(lighting_cutoff, LIGHTING_CUTOFF_MEDIUM)
+
+	if (HAS_TRAIT(src, TRAIT_MINOR_NIGHT_VISION))
+		lighting_cutoff = max(lighting_cutoff, LIGHTING_CUTOFF_LOW)
 
 	if(HAS_TRAIT(src, TRAIT_XRAY_VISION))
 		new_sight |= SEE_TURFS|SEE_MOBS|SEE_OBJS
@@ -743,7 +752,7 @@
 
 	//Fire and Brute damage overlay (BSSR)
 	var/hurtdamage = getBruteLoss() + getFireLoss() + damageoverlaytemp
-	if(hurtdamage)
+	if(hurtdamage && !HAS_TRAIT(src, TRAIT_NO_DAMAGE_OVERLAY))
 		var/severity = 0
 		switch(hurtdamage)
 			if(5 to 15)
@@ -1040,6 +1049,11 @@
 	bodyparts += new_bodypart
 	new_bodypart.update_owner(src)
 
+	// Apply a bodypart effect or merge with an existing one, for stuff like plant limbs regenning in light
+	for(var/datum/status_effect/grouped/bodypart_effect/effect_type as anything in new_bodypart.bodypart_effects)
+		apply_status_effect(effect_type, type, new_bodypart)
+
+	// Tell the organs in the bodyparts that we are in a mob again
 	for(var/obj/item/organ/organ in new_bodypart)
 		organ.mob_insert(src)
 
@@ -1089,10 +1103,6 @@
 	for(var/obj/item/bodypart/bodypart as anything in bodyparts)
 		final_modification += bodypart.speed_modifier
 	add_or_update_variable_movespeed_modifier(/datum/movespeed_modifier/bodypart, update = TRUE, multiplicative_slowdown = final_modification)
-
-/mob/living/carbon/proc/create_internal_organs()
-	for(var/obj/item/organ/internal_organ in organs)
-		internal_organ.Insert(src)
 
 /proc/cmp_organ_slot_asc(slot_a, slot_b)
 	return GLOB.organ_process_order.Find(slot_a) - GLOB.organ_process_order.Find(slot_b)
@@ -1374,7 +1384,7 @@
 /// Special carbon interaction on lying down, to transform its sprite by a rotation.
 /mob/living/carbon/proc/lying_angle_on_lying_down(new_lying_angle)
 	if(!new_lying_angle)
-		set_lying_angle(pick(90, 270))
+		set_lying_angle(pick(LYING_ANGLE_EAST, LYING_ANGLE_WEST))
 	else
 		set_lying_angle(new_lying_angle)
 
@@ -1488,3 +1498,9 @@
 		return
 	head.adjustBleedStacks(5)
 	visible_message(span_notice("[src] gets a nosebleed."), span_warning("You get a nosebleed."))
+
+/mob/living/carbon/check_hit_limb_zone_name(hit_zone)
+	if(get_bodypart(hit_zone))
+		return hit_zone
+	// When a limb is missing the damage is actually passed to the chest
+	return BODY_ZONE_CHEST
